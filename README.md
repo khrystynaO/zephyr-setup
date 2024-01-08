@@ -9,7 +9,6 @@ the necessary modules for a West based [Zephyr workspace application][1].
 - name: Setup Zephyr project
   uses: <TODO>/zephyr-setup@v1
   with:
-    app-path: example-application
     toolchains: arm-zephyr-eabi
 ```
 
@@ -24,7 +23,6 @@ the necessary modules for a West based [Zephyr workspace application][1].
 - name: Setup Zephyr project
   uses: <TODO>/zephyr-setup@v1
   with:
-    app-path: app
     toolchains: arm-zephyr-eabi
 
 - name: Build
@@ -43,7 +41,6 @@ the necessary modules for a West based [Zephyr workspace application][1].
 - name: Setup Zephyr project
   uses: <TODO>/zephyr-setup@v1
   with:
-    app-path: app
     toolchains: arm-zephyr-eabi
 
 - name: Build
@@ -57,9 +54,19 @@ the necessary modules for a West based [Zephyr workspace application][1].
 - name: Setup Zephyr project
   uses: <TODO>/zephyr-setup@v1
   with:
-    app-path: app
     toolchains: arm-zephyr-eabi:riscv64-zephyr-elf
     sdk-version: 0.16.3
 ```
 
+## Use a specific Zephyr version
+
+```yaml
+- name: Setup Zephyr project
+  uses: <TODO>/zephyr-setup@v1
+  with:
+    toolchains: arm-zephyr-eabi:riscv64-zephyr-elf
+    sdk-version: 0.16.3
+    zephyr-version: v3.5.0
+```
 [1]: https://docs.zephyrproject.org/latest/develop/application/index.html#zephyr-workspace-app
+

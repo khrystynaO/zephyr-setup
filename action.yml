@@ -4,9 +4,11 @@ name: Setup Zephyr project
 description: Setup a Zephyr base project using west and downloading the Zephyr SDK
 
 inputs:
-  app-path:
-    description: Application code path, should contain a west.yml file
-    required: true
+
+  zephyr-version:
+    description: Zephyr version to use
+    required: false
+    default: main
 
   sdk-version:
     description: Zephyr SDK version to use
@@ -123,8 +125,9 @@ runs:
     - name: Initialize
       shell: bash
       run: |
-        west init -l ${{ inputs.app-path }}
-        west update -o=--depth=1 -n
+        mkdir zephyr_project && cd zephyr_project
+        west init --mr ${{ inputs.zephyr-version }}
+        west update
 
     - name: Cache Python packages
       uses: actions/cache@v3
@@ -135,4 +138,9 @@ runs:
     - name: Install Python packages
       shell: bash
       run: |
-        pip3 install -r zephyr/scripts/requirements.txt
+        pip3 install -r zephyr_project/zephyr/scripts/requirements.txt
+    - name: Export Zephyr_Base
+      shell: bash
+      run: |
+        echo "ZEPHYR_BASE=$(pwd)/zephyr_project/zephyr" >> $GITHUB_ENV
+
