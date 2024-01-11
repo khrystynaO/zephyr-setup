@@ -10,6 +10,14 @@ inputs:
     required: false
     default: main
 
+  app-path:
+    description: Application code path, should contain a west.yml file
+    required: true
+
+  manifest-file:
+    description: manifest file for west init
+    required: false
+
   sdk-version:
     description: Zephyr SDK version to use
     required: false
@@ -68,7 +76,7 @@ runs:
         echo "PIP_CACHE_PATH=${pip_cache_path}" >> $GITHUB_ENV
         echo "SETUP_FILE=${setup_file}" >> $GITHUB_ENV
         echo "SETUP_OPT=${setup_opt}" >> $GITHUB_ENV
-
+        echo "WEST_MANIFEST_FILE=$(pwd)/${{ inputs.manifest-file }}" >> $GITHUB_ENV
     - name: Install dependencies
       shell: bash
       run: |
@@ -122,13 +130,19 @@ runs:
         fi
         ${SETUP_FILE} ${SETUP_OPT}c
 
-    - name: Initialize
+    - name: Initialize Zephyr
       shell: bash
       run: |
-        mkdir zephyr_project && cd zephyr_project
-        west init --mr ${{ inputs.zephyr-version }}
-        west update
-
+        if test -z "$WEST_MANIFEST_FILE"
+        then
+            mkdir zephyr_project && cd zephyr_project
+            west init --mr ${{ inputs.zephyr-version }}
+            west update
+        else
+            west init -l --mf $WEST_MANIFEST_FILE
+            west update -o=--depth=1 -n
+        fi
+        west zephyr-export
     - name: Cache Python packages
       uses: actions/cache@v3
       with:
@@ -138,9 +152,14 @@ runs:
     - name: Install Python packages
       shell: bash
       run: |
-        pip3 install -r zephyr_project/zephyr/scripts/requirements.txt
-    - name: Export Zephyr_Base
-      shell: bash
-      run: |
-        echo "ZEPHYR_BASE=$(pwd)/zephyr_project/zephyr" >> $GITHUB_ENV
+        if test -z "$WEST_MANIFEST_FILE"
+        then
+            pip3 install -r zephyr_project/zephyr/scripts/requirements.txt
+            echo "ZEPHYR_BASE=$(pwd)/zephyr_project/zephyr" >> $GITHUB_ENV
+        else
+            echo "dir $(pwd)"
+            pip3 install -r ../zephyr/scripts/requirements.txt
+            echo "ZEPHYR_BASE=$(pwd)/../zephyr" >> $GITHUB_ENV
+            #echo "zephyr_base  $ZEPHYR_BASE"
+        fi
 
