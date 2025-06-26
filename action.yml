@@ -142,13 +142,53 @@ runs:
             west update
         else
             west init -l --mf $WEST_MANIFEST_FILE
-            # Try shallow clone first, with fallback to full clone if it fails
-            echo "Attempting shallow clone with depth=20..."
-            if ! west update -o=--depth=20; then
-              echo "Shallow clone failed, trying with increased depth=50..."
-              if ! west update -o=--depth=50; then
-                echo "Increased depth failed, falling back to full clone..."
+
+            # Use different strategies based on Zephyr version
+            ZEPHYR_VERSION="${{ inputs.zephyr-version }}"
+            echo "Zephyr version: $ZEPHYR_VERSION"
+
+            if [[ "$ZEPHYR_VERSION" == "main" ]]; then
+              echo "Using full clone for main branch (active development)"
+              west update
+            elif [[ "$ZEPHYR_VERSION" == "latest" ]]; then
+              echo "Using optimized approach for latest stable release"
+              # First try shallow with moderate depth for latest stable
+              if ! west update -o=--depth=10; then
+                echo "Shallow clone failed, trying deeper..."
+                if ! west update -o=--depth=30; then
+                  echo "Deep clone failed, falling back to full clone..."
+                  west update
+                fi
+              fi
+            elif [[ "$ZEPHYR_VERSION" == "v4."* ]]; then
+              echo "Using moderate depth for v4.x versions"
+              if ! west update -o=--depth=20; then
+                echo "Moderate depth failed, falling back to full clone..."
                 west update
+              fi
+            elif [[ "$ZEPHYR_VERSION" == "v3.7"* ]] || [[ "$ZEPHYR_VERSION" == "v3.6"* ]]; then
+              echo "Using shallow clone with fallback for recent v3.x versions"
+              if ! west update -o=--depth=10; then
+                echo "Shallow clone failed, falling back to full clone..."
+                west update
+              fi
+            elif [[ "$ZEPHYR_VERSION" == "v3.5"* ]] || [[ "$ZEPHYR_VERSION" == "v3.4"* ]] || [[ "$ZEPHYR_VERSION" == "v3.3"* ]]; then
+              echo "Using fast shallow clone for stable v3.x versions"
+              if ! west update -o=--depth=1; then
+                echo "Ultra-shallow clone failed, trying moderate depth..."
+                if ! west update -o=--depth=10; then
+                  echo "Moderate depth failed, falling back to full clone..."
+                  west update
+                fi
+              fi
+            else
+              echo "Using progressive fallback for other/unknown versions"
+              if ! west update -o=--depth=15; then
+                echo "Shallow clone failed, trying deeper..."
+                if ! west update -o=--depth=40; then
+                  echo "Deep clone failed, falling back to full clone..."
+                  west update
+                fi
               fi
             fi
         fi
