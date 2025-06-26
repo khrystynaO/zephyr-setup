@@ -142,8 +142,15 @@ runs:
             west update
         else
             west init -l --mf $WEST_MANIFEST_FILE
-            # Use shallow clone with sufficient depth for STM32/ARM builds, remove -n flag to ensure modules are fetched
-            west update -o=--depth=20 1> west.update.log || west update -o=--depth=20 1> west.update-2.log || west update 1> west.update-3.log
+            # Try shallow clone first, with fallback to full clone if it fails
+            echo "Attempting shallow clone with depth=20..."
+            if ! west update -o=--depth=20; then
+              echo "Shallow clone failed, trying with increased depth=50..."
+              if ! west update -o=--depth=50; then
+                echo "Increased depth failed, falling back to full clone..."
+                west update
+              fi
+            fi
         fi
         west zephyr-export
 
