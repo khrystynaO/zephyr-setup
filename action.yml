@@ -175,7 +175,24 @@ runs:
         # Check if CMSIS module was properly fetched
         if [ -d "modules/hal/cmsis" ]; then
           echo "✓ CMSIS module found"
-          find modules/hal/cmsis -name "*.h" | head -3 | while read file; do echo "  Found: $file"; done
+          echo "CMSIS directory structure:"
+          find modules/hal/cmsis -type d | head -10
+          echo "CMSIS header files:"
+          find modules/hal/cmsis -name "*.h" | head -5
+
+          # Look specifically for cmsis_core.h
+          echo "Looking for cmsis_core.h:"
+          find modules/hal/cmsis -name "*cmsis*" -name "*.h" || echo "No cmsis*.h files found"
+          find modules/hal/cmsis -name "core_*.h" || echo "No core_*.h files found"
+
+          # Check if there's a CMSIS directory with Core/Include
+          if [ -d "modules/hal/cmsis/CMSIS/Core/Include" ]; then
+            echo "✓ Found CMSIS/Core/Include directory"
+            ls -la modules/hal/cmsis/CMSIS/Core/Include/
+          else
+            echo "✗ CMSIS/Core/Include directory not found"
+            find modules/hal/cmsis -name "Include" -type d
+          fi
         else
           echo "✗ CMSIS module missing"
           ls -la modules/hal/ 2>/dev/null || echo "modules/hal directory not found"
@@ -184,8 +201,38 @@ runs:
         # Check if STM32 HAL module was properly fetched
         if [ -d "modules/hal/stm32" ]; then
           echo "✓ STM32 HAL module found"
+          echo "STM32 HAL structure:"
+          ls -la modules/hal/stm32/ | head -10
         else
           echo "✗ STM32 HAL module missing"
+        fi
+
+        # Force a re-fetch of CMSIS if headers are missing
+        echo "Checking if CMSIS needs manual fix..."
+        if [ ! -f "modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ] && [ ! -f "modules/hal/cmsis/cmsis_core.h" ]; then
+          echo "CMSIS headers seem incomplete, attempting to refresh..."
+          cd modules/hal/cmsis
+          git fetch --unshallow 2>/dev/null || echo "Already unshallow or fetch failed"
+          git reset --hard HEAD
+          cd ../../..
+
+          # If still missing, check if we need to do a complete update without depth restriction
+          if [ ! -f "modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ]; then
+            echo "CMSIS still incomplete, forcing full module update..."
+            west update --name-cache .west/name-cache modules/hal/cmsis || echo "Manual CMSIS update failed"
+          fi
+        fi
+
+        # Final verification of critical files
+        echo "Final CMSIS verification:"
+        if [ -f "modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ]; then
+          echo "✓ CMSIS headers properly available"
+        elif [ -f "modules/hal/cmsis/cmsis_core.h" ]; then
+          echo "✓ CMSIS core header found (alternative location)"
+        else
+          echo "✗ CMSIS headers still not found after all attempts"
+          echo "Available files in CMSIS module:"
+          find modules/hal/cmsis -name "*.h" | head -10 || echo "No header files found"
         fi
 
         # Set environment variables for subsequent steps
