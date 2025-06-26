@@ -131,66 +131,35 @@ runs:
         fi
         ${SETUP_FILE} ${SETUP_OPT}c
 
-    - name: Initialize Zephyr
+    - name: Initialize Zephyr (based on official Zephyr workflows)
       shell: bash
       run: |
-        if test -z "$WEST_MANIFEST_FILE"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+        if test -z "$WEST_MANIFEST_FILE" || [[ "${{ inputs.zephyr-version }}" == "latest" ]]
         then
+            # Standard Zephyr setup like official workflows
             mkdir zephyr_project && cd zephyr_project
-            west init --mr ${{ inputs.zephyr-version }}
-            # Full update for complete project setup
+            if [[ "${{ inputs.zephyr-version }}" == "latest" ]]; then
+              west init
+            else
+              west init --mr ${{ inputs.zephyr-version }}
+            fi
             west update
         else
-            west init -l --mf $WEST_MANIFEST_FILE
+            # Use official Zephyr pattern: west init -l .
+            west init -l --mf $WEST_MANIFEST_FILE || true
 
-            # Use different strategies based on Zephyr version
-            ZEPHYR_VERSION="${{ inputs.zephyr-version }}"
-            echo "Zephyr version: $ZEPHYR_VERSION"
+            # Configure west like official Zephyr workflows
+            west config manifest.group-filter -- +ci,+optional || echo "Group filter not supported"
+            west config --global update.narrow true || echo "Narrow update not supported"
 
-            if [[ "$ZEPHYR_VERSION" == "main" ]]; then
-              echo "Using full clone for main branch (active development)"
-              west update
-            elif [[ "$ZEPHYR_VERSION" == "latest" ]]; then
-              echo "Using optimized approach for latest stable release"
-              # First try shallow with moderate depth for latest stable
-              if ! west update -o=--depth=10; then
-                echo "Shallow clone failed, trying deeper..."
-                if ! west update -o=--depth=30; then
-                  echo "Deep clone failed, falling back to full clone..."
-                  west update
-                fi
-              fi
-            elif [[ "$ZEPHYR_VERSION" == "v4."* ]]; then
-              echo "Using moderate depth for v4.x versions"
-              if ! west update -o=--depth=20; then
-                echo "Moderate depth failed, falling back to full clone..."
-                west update
-              fi
-            elif [[ "$ZEPHYR_VERSION" == "v3.7"* ]] || [[ "$ZEPHYR_VERSION" == "v3.6"* ]]; then
-              echo "Using shallow clone with fallback for recent v3.x versions"
-              if ! west update -o=--depth=10; then
-                echo "Shallow clone failed, falling back to full clone..."
-                west update
-              fi
-            elif [[ "$ZEPHYR_VERSION" == "v3.5"* ]] || [[ "$ZEPHYR_VERSION" == "v3.4"* ]] || [[ "$ZEPHYR_VERSION" == "v3.3"* ]]; then
-              echo "Using fast shallow clone for stable v3.x versions"
-              if ! west update -o=--depth=1; then
-                echo "Ultra-shallow clone failed, trying moderate depth..."
-                if ! west update -o=--depth=10; then
-                  echo "Moderate depth failed, falling back to full clone..."
-                  west update
-                fi
-              fi
-            else
-              echo "Using progressive fallback for other/unknown versions"
-              if ! west update -o=--depth=15; then
-                echo "Shallow clone failed, trying deeper..."
-                if ! west update -o=--depth=40; then
-                  echo "Deep clone failed, falling back to full clone..."
-                  west update
-                fi
-              fi
-            fi
+            # Use official Zephyr retry pattern with cleanup on failure
+            west update 2>&1 1> west.update.log || \
+            west update 2>&1 1> west.update-2.log || \
+            ( echo "West update failed, cleaning and retrying..." && \
+              rm -rf ../modules ../bootloader ../tools 2>/dev/null || true && \
+              west update )
         fi
         west zephyr-export
 
@@ -203,7 +172,7 @@ runs:
     - name: Install Python packages
       shell: bash
       run: |
-        if test -z "$WEST_MANIFEST_FILE"
+        if test -z "$WEST_MANIFEST_FILE" || [[ "${{ inputs.zephyr-version }}" == "latest" ]]
         then
             pip3 install -r zephyr_project/zephyr/scripts/requirements.txt
             echo "ZEPHYR_BASE=$(pwd)/zephyr_project/zephyr" >> $GITHUB_ENV
@@ -213,114 +182,27 @@ runs:
             echo "ZEPHYR_BASE=$(pwd)/../zephyr" >> $GITHUB_ENV
         fi
 
-    - name: Verify Zephyr setup and fix CMSIS
+    - name: Set environment variables (based on official workflows)
       shell: bash
       run: |
-        echo "ZEPHYR_BASE: $ZEPHYR_BASE"
-        echo "Current directory: $(pwd)"
-        echo "Directory contents:"
-        ls -la
-
-        # Determine the correct workspace directory
-        if test -z "$WEST_MANIFEST_FILE"
-        then
-            # Standard Zephyr setup
-            WORKSPACE_DIR="zephyr_project"
-            echo "Using standard workspace: $WORKSPACE_DIR"
-        else
-            # Custom manifest setup - modules should be relative to where west was initialized
-            WORKSPACE_DIR="."
-            echo "Using custom manifest workspace: $WORKSPACE_DIR"
-            # Also check one level up where zephyr might be
-            if [ -d "../modules" ]; then
-              WORKSPACE_DIR=".."
-              echo "Found modules one level up, using: $WORKSPACE_DIR"
-            fi
-        fi
-
-        echo "Checking for critical modules in: $WORKSPACE_DIR"
-
-        # Check if CMSIS module was properly fetched
-        if [ -d "$WORKSPACE_DIR/modules/hal/cmsis" ]; then
-          echo "✓ CMSIS module found in $WORKSPACE_DIR/modules/hal/cmsis"
-          echo "CMSIS directory structure:"
-          find "$WORKSPACE_DIR/modules/hal/cmsis" -type d | head -10
-          echo "CMSIS header files:"
-          find "$WORKSPACE_DIR/modules/hal/cmsis" -name "*.h" | head -5
-
-          # Look specifically for cmsis_core.h
-          echo "Looking for cmsis_core.h:"
-          find "$WORKSPACE_DIR/modules/hal/cmsis" -name "*cmsis*" -name "*.h" || echo "No cmsis*.h files found"
-          find "$WORKSPACE_DIR/modules/hal/cmsis" -name "core_*.h" || echo "No core_*.h files found"
-
-          # Check if there's a CMSIS directory with Core/Include
-          if [ -d "$WORKSPACE_DIR/modules/hal/cmsis/CMSIS/Core/Include" ]; then
-            echo "✓ Found CMSIS/Core/Include directory"
-            ls -la "$WORKSPACE_DIR/modules/hal/cmsis/CMSIS/Core/Include/"
-          else
-            echo "✗ CMSIS/Core/Include directory not found"
-            find "$WORKSPACE_DIR/modules/hal/cmsis" -name "Include" -type d
-          fi
-        else
-          echo "✗ CMSIS module missing from $WORKSPACE_DIR/modules/hal/cmsis"
-          echo "Available directories in workspace:"
-          ls -la "$WORKSPACE_DIR"/ 2>/dev/null || echo "Workspace directory not found"
-          if [ -d "$WORKSPACE_DIR/modules" ]; then
-            echo "Contents of modules directory:"
-            ls -la "$WORKSPACE_DIR/modules/"
-            if [ -d "$WORKSPACE_DIR/modules/hal" ]; then
-              echo "Contents of hal directory:"
-              ls -la "$WORKSPACE_DIR/modules/hal/"
-            fi
-          fi
-        fi
-
-        # Check if STM32 HAL module was properly fetched
-        if [ -d "$WORKSPACE_DIR/modules/hal/stm32" ]; then
-          echo "✓ STM32 HAL module found"
-          echo "STM32 HAL structure:"
-          ls -la "$WORKSPACE_DIR/modules/hal/stm32/" | head -10
-        else
-          echo "✗ STM32 HAL module missing from $WORKSPACE_DIR/modules/hal/stm32"
-        fi
-
-        # Force a re-fetch of CMSIS if headers are missing
-        echo "Checking if CMSIS needs manual fix..."
-        if [ ! -f "$WORKSPACE_DIR/modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ] && [ ! -f "$WORKSPACE_DIR/modules/hal/cmsis/cmsis_core.h" ]; then
-          echo "CMSIS headers seem incomplete, attempting to refresh..."
-          if [ -d "$WORKSPACE_DIR/modules/hal/cmsis" ]; then
-            cd "$WORKSPACE_DIR/modules/hal/cmsis"
-            git fetch --unshallow 2>/dev/null || echo "Already unshallow or fetch failed"
-            git reset --hard HEAD
-            cd - >/dev/null
-          else
-            echo "Cannot refresh CMSIS - directory does not exist"
-            echo "Attempting west update to fetch missing modules..."
-            west update modules/hal/cmsis || echo "Failed to update CMSIS module"
-          fi
-
-          # If still missing, check if we need to do a complete update without depth restriction
-          if [ ! -f "$WORKSPACE_DIR/modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ]; then
-            echo "CMSIS still incomplete, forcing full module update..."
-            west update --name-cache .west/name-cache modules/hal/cmsis || echo "Manual CMSIS update failed"
-          fi
-        fi
-
-        # Final verification of critical files
-        echo "Final CMSIS verification:"
-        if [ -f "$WORKSPACE_DIR/modules/hal/cmsis/CMSIS/Core/Include/cmsis_compiler.h" ]; then
-          echo "✓ CMSIS headers properly available"
-        elif [ -f "$WORKSPACE_DIR/modules/hal/cmsis/cmsis_core.h" ]; then
-          echo "✓ CMSIS core header found (alternative location)"
-        else
-          echo "✗ CMSIS headers still not found after all attempts"
-          echo "Available files in CMSIS module:"
-          find "$WORKSPACE_DIR/modules/hal/cmsis" -name "*.h" 2>/dev/null | head -10 || echo "No header files found"
-        fi
-
-        # Set environment variables for subsequent steps
         echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
         if [ -d "zephyr-sdk" ]; then
           echo "ZEPHYR_SDK_INSTALL_DIR=$(pwd)/zephyr-sdk" >> $GITHUB_ENV
         fi
+
+        # Set SDK path like official workflows
+        if [ -f "SDK_VERSION" ]; then
+          SDK_VERSION=$(cat SDK_VERSION)
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-${SDK_VERSION}" >> $GITHUB_ENV
+        elif [ -f "../zephyr/SDK_VERSION" ]; then
+          SDK_VERSION=$(cat ../zephyr/SDK_VERSION)
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-${SDK_VERSION}" >> $GITHUB_ENV
+        elif [ -f "zephyr_project/zephyr/SDK_VERSION" ]; then
+          SDK_VERSION=$(cat zephyr_project/zephyr/SDK_VERSION)
+          echo "ZEPHYR_SDK_INSTALL_DIR=/opt/toolchains/zephyr-sdk-${SDK_VERSION}" >> $GITHUB_ENV
+        fi
+
+        echo "ZEPHYR_BASE: $ZEPHYR_BASE"
+        echo "ZEPHYR_SDK_INSTALL_DIR: $ZEPHYR_SDK_INSTALL_DIR"
+        echo "Setup complete - using official Zephyr workflow patterns"
 
