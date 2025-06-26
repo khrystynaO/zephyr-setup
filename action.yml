@@ -77,6 +77,7 @@ runs:
         echo "SETUP_FILE=${setup_file}" >> $GITHUB_ENV
         echo "SETUP_OPT=${setup_opt}" >> $GITHUB_ENV
         echo "WEST_MANIFEST_FILE=$(pwd)/${{ inputs.manifest-file }}" >> $GITHUB_ENV
+
     - name: Install dependencies
       shell: bash
       run: |
@@ -137,12 +138,15 @@ runs:
         then
             mkdir zephyr_project && cd zephyr_project
             west init --mr ${{ inputs.zephyr-version }}
+            # Full update for complete project setup
             west update
         else
             west init -l --mf $WEST_MANIFEST_FILE
-            west update -o=--depth=1 -n
+            # Use shallow clone with sufficient depth for STM32/ARM builds, remove -n flag to ensure modules are fetched
+            west update -o=--depth=20 1> west.update.log || west update -o=--depth=20 1> west.update-2.log || west update 1> west.update-3.log
         fi
         west zephyr-export
+
     - name: Cache Python packages
       uses: actions/cache@v3
       with:
@@ -160,6 +164,33 @@ runs:
             echo "dir $(pwd)"
             pip3 install -r ../zephyr/scripts/requirements.txt
             echo "ZEPHYR_BASE=$(pwd)/../zephyr" >> $GITHUB_ENV
-            #echo "zephyr_base  $ZEPHYR_BASE"
+        fi
+
+    - name: Verify Zephyr setup
+      shell: bash
+      run: |
+        echo "ZEPHYR_BASE: $ZEPHYR_BASE"
+        echo "Checking for critical modules..."
+
+        # Check if CMSIS module was properly fetched
+        if [ -d "modules/hal/cmsis" ]; then
+          echo "✓ CMSIS module found"
+          find modules/hal/cmsis -name "*.h" | head -3 | while read file; do echo "  Found: $file"; done
+        else
+          echo "✗ CMSIS module missing"
+          ls -la modules/hal/ 2>/dev/null || echo "modules/hal directory not found"
+        fi
+
+        # Check if STM32 HAL module was properly fetched
+        if [ -d "modules/hal/stm32" ]; then
+          echo "✓ STM32 HAL module found"
+        else
+          echo "✗ STM32 HAL module missing"
+        fi
+
+        # Set environment variables for subsequent steps
+        echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
+        if [ -d "zephyr-sdk" ]; then
+          echo "ZEPHYR_SDK_INSTALL_DIR=$(pwd)/zephyr-sdk" >> $GITHUB_ENV
         fi
 
