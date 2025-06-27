@@ -1,379 +1,84 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Setup Zephyr project
-description: Setup a Zephyr base project using west and downloading the Zephyr SDK
+name: Simple Zephyr Setup
+description: Simple and fast Zephyr project setup using official action
 
 inputs:
-  zephyr-version:
-    description: Zephyr version to use
-    required: false
-    default: main
-
   app-path:
-    description: Application code path, should contain a west.yml file
+    description: Application code path
+    required: true
+    default: '.'
+
+  board:
+    description: Target board (e.g., nrf52840dk_nrf52840, nucleo_f401re)
     required: true
 
-  manifest-file:
-    description: manifest file for west init
+  toolchains:
+    description: Toolchains to install (colon separated)
     required: false
+    default: 'arm-zephyr-eabi'
 
   sdk-version:
-    description: Zephyr SDK version to use
+    description: Zephyr SDK version
     required: false
-    default: 0.16.4
+    default: '0.16.8'
 
-  sdk-base:
-    description: Base URL of the Zephyr SDK
+  build-type:
+    description: Build type (release, debug)
     required: false
-    default: https://github.com/zephyrproject-rtos/sdk-ng/releases/download
+    default: 'release'
 
-  toolchains:
-    description: List of toolchains to install, colon separated
-    required: false
-    default: arm-zephyr-eabi:riscv64-zephyr-elf
-
-  target-board:
-    description: Target board name (e.g., nrf52840dk_nrf52840, stm32f4_disco)
-    required: false
-
-  hardware-platform:
-    description: Hardware platform filter (arm, riscv, x86, etc.)
-    required: false
-
-  minimal-modules:
-    description: Install only minimal required modules for target
-    required: false
-    default: 'true'
+outputs:
+  firmware-hex:
+    description: Path to the generated hex file
+    value: ${{ steps.build.outputs.hex-path }}
+  firmware-bin:
+    description: Path to the generated bin file
+    value: ${{ steps.build.outputs.bin-path }}
 
 runs:
-  using: "composite"
+  using: composite
   steps:
-    - name: Environment setup
-      id: env-setup
-      shell: bash
-      run: |
-        runner="${{ runner.os }}-${{ runner.arch }}"
-        if [ "$runner" = "Linux-X64" ]; then
-          sdk_variant="linux-x86_64"
-        elif [ "$runner" = "Linux-ARM64" ]; then
-          sdk_variant="linux-aarch64"
-        elif [ "$runner" = "macOS-X64" ]; then
-          sdk_variant="macos-x86_64"
-        elif [ "$runner" = "macOS-ARM64" ]; then
-          sdk_variant="macos-aarch64"
-        elif [ "$runner" = "Windows-X64" ]; then
-          sdk_variant="windows-x86_64"
-        else
-          echo "Unsupported runner platform: $runner"
-        fi
-
-        if [ "${{ runner.os }}" = "Linux" ]; then
-          pip_cache_path="~/.cache/pip"
-          sdk_ext="tar.xz"
-          setup_file="./setup.sh"
-          setup_opt="-"
-        elif [ "${{ runner.os }}" = "macOS" ]; then
-          pip_cache_path="~/Library/Caches/pip"
-          sdk_ext="tar.xz"
-          setup_file="./setup.sh"
-          setup_opt="-"
-        elif [ "${{ runner.os }}" = "Windows" ]; then
-          pip_cache_path="~\AppData\Local\pip\Cache"
-          sdk_ext="7z"
-          setup_file="./setup.cmd"
-          setup_opt="//"
-        fi
-
-        echo "SDK_FILE=zephyr-sdk-${{ inputs.sdk-version }}_${sdk_variant}_minimal.${sdk_ext}" >> $GITHUB_ENV
-        echo "PIP_CACHE_PATH=${pip_cache_path}" >> $GITHUB_ENV
-        echo "SETUP_FILE=${setup_file}" >> $GITHUB_ENV
-        echo "SETUP_OPT=${setup_opt}" >> $GITHUB_ENV
-        echo "WEST_MANIFEST_FILE=$(pwd)/${{ inputs.manifest-file }}" >> $GITHUB_ENV
-
-    # OPTIMIZATION: Parallel dependency installation
-    - name: Install system dependencies (Linux)
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ninja-build ccache
-        if [ "${{ runner.arch }}" = "X64" ]; then
-          sudo apt-get install -y libc6-dev-i386
-        fi
-
-    - name: Install system dependencies (macOS)
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        brew install ninja ccache
-
-    - name: Install system dependencies (Windows)
-      if: runner.os == 'Windows'
-      shell: bash
-      run: |
-        choco feature enable -n allowGlobalConfirmation
-        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-        choco install ninja wget 7zip
-
-    # OPTIMIZATION: Install Python deps early and in parallel
-    - name: Install Python dependencies
-      shell: bash
-      run: |
-        pip3 install -U pip wheel setuptools
-        pip3 install west
-
-    # OPTIMIZATION: Enhanced caching with better keys
-    - name: Cache Zephyr SDK
-      id: cache-toolchain
-      uses: actions/cache@v4
+    - name: Setup Zephyr
+      uses: zephyrproject-rtos/action-zephyr-setup@v1
       with:
-        path: zephyr-sdk
-        key: zephyr-sdk-${{ inputs.sdk-version }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchains }}-v2
-        restore-keys: |
-          zephyr-sdk-${{ inputs.sdk-version }}-${{ runner.os }}-${{ runner.arch }}-
+        app-path: ${{ inputs.app-path }}
+        toolchains: ${{ inputs.toolchains }}
+        sdk-version: ${{ inputs.sdk-version }}
 
-    # OPTIMIZATION: Cache west modules separately for better reuse
-    - name: Cache West modules
-      id: cache-west
-      uses: actions/cache@v4
-      with:
-        path: |
-          modules
-          bootloader
-          tools
-        key: west-modules-${{ inputs.zephyr-version }}-${{ hashFiles('**/west.yml', '**/manifest.yml') }}-v2
-        restore-keys: |
-          west-modules-${{ inputs.zephyr-version }}-
-          west-modules-
-
-    # OPTIMIZATION: Cache Zephyr repository separately
-    - name: Cache Zephyr repository
-      id: cache-zephyr
-      uses: actions/cache@v4
-      with:
-        path: zephyr
-        key: zephyr-repo-${{ inputs.zephyr-version }}-${{ github.sha }}-v2
-        restore-keys: |
-          zephyr-repo-${{ inputs.zephyr-version }}-
-          zephyr-repo-
-
-    - if: ${{ steps.cache-toolchain.outputs.cache-hit != 'true' }}
-      name: Download Zephyr SDK
+    - name: Build firmware
+      id: build
       shell: bash
       run: |
-        # OPTIMIZATION: Use aria2c for faster parallel downloads if available
-        if command -v aria2c >/dev/null 2>&1; then
-          aria2c -x 8 -s 8 ${{ inputs.sdk-base }}/v${{ inputs.sdk-version }}/$SDK_FILE
+        # Configure build type
+        if [ "${{ inputs.build-type }}" = "debug" ]; then
+          BUILD_FLAGS="-DEXTRA_CONF_FILE=debug.conf"
         else
-          wget --progress=dot:giga ${{ inputs.sdk-base }}/v${{ inputs.sdk-version }}/$SDK_FILE
+          BUILD_FLAGS=""
         fi
 
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          7z x $SDK_FILE
-          mv zephyr-sdk-${{ inputs.sdk-version }} zephyr-sdk
-        else
-          mkdir zephyr-sdk
-          # OPTIMIZATION: Use pigz for parallel decompression if available
-          if command -v pigz >/dev/null 2>&1; then
-            pigz -dc $SDK_FILE | tar xf - -C zephyr-sdk --strip-components=1
-          else
-            tar xf $SDK_FILE -C zephyr-sdk --strip-components=1
-          fi
+        # Build the firmware
+        west build ${{ inputs.app-path }} -b ${{ inputs.board }} -p auto $BUILD_FLAGS
+
+        # Set output paths
+        HEX_PATH=""
+        BIN_PATH=""
+
+        if [ -f "build/zephyr/zephyr.hex" ]; then
+          HEX_PATH="build/zephyr/zephyr.hex"
         fi
 
-
-
-    # OPTIMIZATION: Hardware-specific west initialization
-    - name: Configure west for target hardware
-      shell: bash
-      run: |
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-        # Determine required modules based on target board/platform
-        if [[ -n "${{ inputs.target-board }}" ]]; then
-          BOARD_LOWER=$(echo "${{ inputs.target-board }}" | tr '[:upper:]' '[:lower:]')
-
-          # Set platform-specific group filters
-          if [[ "$BOARD_LOWER" == *"nrf"* ]]; then
-            PLATFORM_GROUPS="+nrf,+nordic"
-          elif [[ "$BOARD_LOWER" == *"stm32"* ]]; then
-            PLATFORM_GROUPS="+stm32,+st"
-          elif [[ "$BOARD_LOWER" == *"esp32"* ]]; then
-            PLATFORM_GROUPS="+esp32,+espressif"
-          elif [[ "$BOARD_LOWER" == *"rpi"* ]] || [[ "$BOARD_LOWER" == *"raspberry"* ]]; then
-            PLATFORM_GROUPS="+rpi,+raspberrypi"
-          elif [[ "$BOARD_LOWER" == *"qemu"* ]]; then
-            PLATFORM_GROUPS="+qemu"
-          else
-            # Generic platform detection
-            if [[ -n "${{ inputs.hardware-platform }}" ]]; then
-              PLATFORM_GROUPS="+${{ inputs.hardware-platform }}"
-            else
-              PLATFORM_GROUPS=""
-            fi
-          fi
-
-          echo "Detected platform groups: $PLATFORM_GROUPS"
-          echo "PLATFORM_GROUPS=$PLATFORM_GROUPS" >> $GITHUB_ENV
+        if [ -f "build/zephyr/zephyr.bin" ]; then
+          BIN_PATH="build/zephyr/zephyr.bin"
         fi
 
-    - name: Initialize Zephyr with minimal modules
-      shell: bash
-      run: |
-        if test -z "$WEST_MANIFEST_FILE" || [[ "${{ inputs.zephyr-version }}" == "latest" ]]
-        then
-            # Standard Zephyr setup
-            mkdir -p zephyr_project && cd zephyr_project
-            if [[ "${{ inputs.zephyr-version }}" == "latest" ]]; then
-              west init --mr main
-            else
-              west init --mr ${{ inputs.zephyr-version }}
-            fi
+        echo "hex-path=$HEX_PATH" >> $GITHUB_OUTPUT
+        echo "bin-path=$BIN_PATH" >> $GITHUB_OUTPUT
 
-            # Configure minimal module set
-            if [[ "${{ inputs.minimal-modules }}" == "true" ]]; then
-              # Only essential modules + platform-specific
-              FILTER_GROUPS="-default,-optional"
-              if [[ -n "$PLATFORM_GROUPS" ]]; then
-                FILTER_GROUPS="$FILTER_GROUPS,$PLATFORM_GROUPS"
-              fi
-              west config manifest.group-filter -- "$FILTER_GROUPS"
-            fi
-
-            # OPTIMIZATION: Only update if cache miss
-            if [[ "${{ steps.cache-west.outputs.cache-hit }}" != "true" ]] || [[ "${{ steps.cache-zephyr.outputs.cache-hit }}" != "true" ]]; then
-              west update --narrow --fetch-opt=--depth=1
-            fi
-        else
-            # Use manifest file
-            west init -l --mf $WEST_MANIFEST_FILE || true
-
-            # OPTIMIZATION: Configure west for target-specific faster operations
-            if [[ "${{ inputs.minimal-modules }}" == "true" ]]; then
-              # Filter to only required modules for this hardware
-              FILTER_GROUPS="-default,-optional,-test"
-              if [[ -n "$PLATFORM_GROUPS" ]]; then
-                FILTER_GROUPS="$FILTER_GROUPS,$PLATFORM_GROUPS"
-              fi
-              west config manifest.group-filter -- "$FILTER_GROUPS" || echo "Group filter not supported"
-            else
-              west config manifest.group-filter -- +ci,+optional || echo "Group filter not supported"
-            fi
-
-            west config --global update.narrow true || echo "Narrow update not supported"
-            west config --global update.fetch-opt --depth=1 || echo "Shallow clone not supported"
-
-            # OPTIMIZATION: Only update minimal required modules
-            if [[ "${{ steps.cache-west.outputs.cache-hit }}" != "true" ]] || [[ "${{ steps.cache-zephyr.outputs.cache-hit }}" != "true" ]]; then
-              echo "Updating only required modules for target hardware..."
-              west update --narrow --fetch-opt=--depth=1 2>&1 1> west.update.log || \
-              west update --narrow --fetch-opt=--depth=1 2>&1 1> west.update-2.log || \
-              ( echo "West update failed, cleaning and retrying..." && \
-                rm -rf ../modules ../bootloader ../tools 2>/dev/null || true && \
-                west update --narrow --fetch-opt=--depth=1 )
-            else
-              echo "Using cached modules - skipping west update"
-            fi
+        # Print build summary
+        echo "🎯 Build completed for ${{ inputs.board }}"
+        if [ -f "build/zephyr/zephyr.elf" ]; then
+          echo "📊 Memory usage:"
+          size build/zephyr/zephyr.elf
         fi
-        west zephyr-export
-
-    # OPTIMIZATION: Only install toolchain for target platform
-    - name: Install minimal toolchain for target
-      if: ${{ steps.cache-toolchain.outputs.cache-hit != 'true' }}
-      working-directory: zephyr-sdk
-      shell: bash
-      run: |
-        # Install only required toolchain based on target board
-        if [[ -n "${{ inputs.target-board }}" ]]; then
-          BOARD_LOWER=$(echo "${{ inputs.target-board }}" | tr '[:upper:]' '[:lower:]')
-
-          if [[ "$BOARD_LOWER" == *"nrf"* ]] || [[ "$BOARD_LOWER" == *"stm32"* ]] || [[ "$BOARD_LOWER" == *"arm"* ]]; then
-            REQUIRED_TOOLCHAIN="arm-zephyr-eabi"
-          elif [[ "$BOARD_LOWER" == *"riscv"* ]]; then
-            REQUIRED_TOOLCHAIN="riscv64-zephyr-elf"
-          elif [[ "$BOARD_LOWER" == *"esp32"* ]]; then
-            REQUIRED_TOOLCHAIN="xtensa-espressif_esp32_zephyr-elf"
-          elif [[ "$BOARD_LOWER" == *"x86"* ]] || [[ "$BOARD_LOWER" == *"qemu_x86"* ]]; then
-            REQUIRED_TOOLCHAIN="x86_64-zephyr-elf"
-          else
-            # Default to ARM if unknown
-            REQUIRED_TOOLCHAIN="arm-zephyr-eabi"
-          fi
-
-          echo "Installing minimal toolchain: $REQUIRED_TOOLCHAIN"
-          ${SETUP_FILE} ${SETUP_OPT}t $REQUIRED_TOOLCHAIN
-        else
-          # Install all specified toolchains if no target specified
-          IFS=":"
-          TOOLCHAINS="${{ inputs.toolchains }}"
-          for toolchain in $TOOLCHAINS; do
-              ${SETUP_FILE} ${SETUP_OPT}t $toolchain
-          done
-        fi
-
-        if [ ! -d sysroots ]; then
-            ${SETUP_FILE} ${SETUP_OPT}h
-        fi
-        ${SETUP_FILE} ${SETUP_OPT}c
-
-    # OPTIMIZATION: Enhanced Python package caching
-    - name: Cache Python packages
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.PIP_CACHE_PATH }}
-        key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml', '**/setup.py') }}-v2
-        restore-keys: |
-          pip-${{ runner.os }}-${{ runner.arch }}-
-
-    - name: Install Python packages
-      shell: bash
-      run: |
-        if test -z "$WEST_MANIFEST_FILE" || [[ "${{ inputs.zephyr-version }}" == "latest" ]]
-        then
-            pip3 install -r zephyr_project/zephyr/scripts/requirements.txt
-            echo "ZEPHYR_BASE=$(pwd)/zephyr_project/zephyr" >> $GITHUB_ENV
-        else
-            pip3 install -r ../zephyr/scripts/requirements.txt
-            echo "ZEPHYR_BASE=$(pwd)/../zephyr" >> $GITHUB_ENV
-        fi
-
-    - name: Set environment variables
-      shell: bash
-      run: |
-        echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> $GITHUB_ENV
-
-        # OPTIMIZATION: Set SDK path more efficiently
-        if [ -d "zephyr-sdk" ]; then
-          echo "ZEPHYR_SDK_INSTALL_DIR=$(pwd)/zephyr-sdk" >> $GITHUB_ENV
-        fi
-
-        # OPTIMIZATION: Enable ccache for faster compilation
-        echo "USE_CCACHE=1" >> $GITHUB_ENV
-        echo "CCACHE_DIR=$(pwd)/.ccache" >> $GITHUB_ENV
-
-        # OPTIMIZATION: Set ninja as default generator
-        echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
-
-        echo "ZEPHYR_BASE: $ZEPHYR_BASE"
-        echo "ZEPHYR_SDK_INSTALL_DIR: $ZEPHYR_SDK_INSTALL_DIR"
-        echo "Setup complete with optimizations"
-
-    # OPTIMIZATION: Add ccache setup
-    - name: Setup ccache
-      shell: bash
-      run: |
-        mkdir -p .ccache
-        ccache --set-config=max_size=500M
-        ccache --set-config=compression=true
-        ccache --set-config=compression_level=6
-        ccache --zero-stats || true
-
-    # OPTIMIZATION: Cache ccache directory
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: .ccache
-        key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-        restore-keys: |
-          ccache-${{ runner.os }}-${{ runner.arch }}-
 
