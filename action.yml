@@ -1,56 +1,92 @@
 # SPDX-License-Identifier: Apache-2.0
 
-name: Simple Zephyr Setup
-description: Simple and fast Zephyr project setup using official action
+name: 'Zephyr Build'
+description: 'Build Zephyr firmware using official Zephyr action'
 
 inputs:
-  app-path:
-    description: Application code path
-    required: true
-    default: '.'
-
   board:
-    description: Target board (e.g., nrf52840dk_nrf52840, nucleo_f401re)
+    description: 'Target board (e.g., nucleo_l4r5zi, rpi_pico)'
     required: true
 
-  toolchains:
-    description: Toolchains to install (colon separated)
-    required: false
-    default: 'arm-zephyr-eabi'
+  app-path:
+    description: 'Path to the application source code'
+    required: true
 
-  sdk-version:
-    description: Zephyr SDK version
+  zephyr-version:
+    description: 'Zephyr version to use (e.g., v3.5.0, latest)'
     required: false
-    default: '0.16.8'
+    default: 'latest'
+
+  manifest-file:
+    description: 'Custom west manifest file (optional)'
+    required: false
+    default: ''
 
   build-type:
-    description: Build type (release, debug)
+    description: 'Build type (release, debug)'
     required: false
     default: 'release'
 
 outputs:
   firmware-hex:
-    description: Path to the generated hex file
+    description: 'Path to generated .hex file'
     value: ${{ steps.build.outputs.hex-path }}
   firmware-bin:
-    description: Path to the generated bin file
+    description: 'Path to generated .bin file'
     value: ${{ steps.build.outputs.bin-path }}
+  firmware-elf:
+    description: 'Path to generated .elf file'
+    value: ${{ steps.build.outputs.elf-path }}
+  build-size:
+    description: 'Firmware size information'
+    value: ${{ steps.build.outputs.size-info }}
 
 runs:
-  using: composite
+  using: 'composite'
   steps:
-    - name: Setup Zephyr
+    - name: Determine toolchain for board
+      id: toolchain
+      shell: bash
+      run: |
+        BOARD_LOWER=$(echo "${{ inputs.board }}" | tr '[:upper:]' '[:lower:]')
+
+        # Determine required toolchain based on board
+        if [[ "$BOARD_LOWER" == *"nrf"* ]] || [[ "$BOARD_LOWER" == *"stm32"* ]] || [[ "$BOARD_LOWER" == *"nucleo"* ]] || [[ "$BOARD_LOWER" == *"blackpill"* ]] || [[ "$BOARD_LOWER" == *"feather"* ]] || [[ "$BOARD_LOWER" == *"disco"* ]] || [[ "$BOARD_LOWER" == *"arduino"* ]]; then
+          TOOLCHAIN="arm-zephyr-eabi"
+        elif [[ "$BOARD_LOWER" == *"rpi_pico"* ]]; then
+          TOOLCHAIN="arm-zephyr-eabi"
+        elif [[ "$BOARD_LOWER" == *"esp32"* ]]; then
+          TOOLCHAIN="xtensa-espressif_esp32_zephyr-elf"
+        elif [[ "$BOARD_LOWER" == *"riscv"* ]]; then
+          TOOLCHAIN="riscv64-zephyr-elf"
+        elif [[ "$BOARD_LOWER" == *"x86"* ]] || [[ "$BOARD_LOWER" == *"qemu_x86"* ]]; then
+          TOOLCHAIN="x86_64-zephyr-elf"
+        else
+          # Default to ARM for unknown boards
+          TOOLCHAIN="arm-zephyr-eabi"
+        fi
+
+        echo "toolchain=$TOOLCHAIN" >> $GITHUB_OUTPUT
+        echo "Detected toolchain: $TOOLCHAIN for board: ${{ inputs.board }}"
+
+    - name: Setup Zephyr project
       uses: zephyrproject-rtos/action-zephyr-setup@v1
       with:
         app-path: ${{ inputs.app-path }}
-        toolchains: ${{ inputs.toolchains }}
-        sdk-version: ${{ inputs.sdk-version }}
+        toolchains: ${{ steps.toolchain.outputs.toolchain }}
+        manifest-file-name: ${{ inputs.manifest-file }}
 
     - name: Build firmware
       id: build
       shell: bash
       run: |
-        # Configure build type
+        echo "Building for board: ${{ inputs.board }}"
+        echo "App path: ${{ inputs.app-path }}"
+        echo "Zephyr base: $ZEPHYR_BASE"
+
+        cd ${{ inputs.app-path }}
+
+        # Add build type configuration
         if [ "${{ inputs.build-type }}" = "debug" ]; then
           BUILD_FLAGS="-DEXTRA_CONF_FILE=debug.conf"
         else
@@ -58,27 +94,41 @@ runs:
         fi
 
         # Build the firmware
-        west build ${{ inputs.app-path }} -b ${{ inputs.board }} -p auto $BUILD_FLAGS
+        west build . -b ${{ inputs.board }} -p auto $BUILD_FLAGS
 
         # Set output paths
         HEX_PATH=""
         BIN_PATH=""
+        ELF_PATH=""
+        SIZE_INFO=""
 
         if [ -f "build/zephyr/zephyr.hex" ]; then
-          HEX_PATH="build/zephyr/zephyr.hex"
+          HEX_PATH="${{ inputs.app-path }}/build/zephyr/zephyr.hex"
+          echo "✅ Generated: zephyr.hex"
         fi
 
         if [ -f "build/zephyr/zephyr.bin" ]; then
-          BIN_PATH="build/zephyr/zephyr.bin"
+          BIN_PATH="${{ inputs.app-path }}/build/zephyr/zephyr.bin"
+          echo "✅ Generated: zephyr.bin"
         fi
 
+        if [ -f "build/zephyr/zephyr.elf" ]; then
+          ELF_PATH="${{ inputs.app-path }}/build/zephyr/zephyr.elf"
+          echo "✅ Generated: zephyr.elf"
+
+          # Get size information
+          SIZE_INFO=$(size build/zephyr/zephyr.elf | tail -n +2)
+          echo "📊 Size information:"
+          echo "$SIZE_INFO"
+        fi
+
+        # Set outputs
         echo "hex-path=$HEX_PATH" >> $GITHUB_OUTPUT
         echo "bin-path=$BIN_PATH" >> $GITHUB_OUTPUT
+        echo "elf-path=$ELF_PATH" >> $GITHUB_OUTPUT
+        echo "size-info<<EOF" >> $GITHUB_OUTPUT
+        echo "$SIZE_INFO" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
-        # Print build summary
-        echo "🎯 Build completed for ${{ inputs.board }}"
-        if [ -f "build/zephyr/zephyr.elf" ]; then
-          echo "📊 Memory usage:"
-          size build/zephyr/zephyr.elf
-        fi
+        echo "🎯 Build completed successfully for ${{ inputs.board }}"
 
