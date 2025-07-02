@@ -140,7 +140,10 @@ runs:
             west update
         else
             west init -l --mf $WEST_MANIFEST_FILE
-            west update -o=--depth=1 -n
+            # First run plain west update to process imports and resolve all projects
+            west update
+            # Verify that cmsis is available (optional verification step)
+            west list | grep cmsis || echo "CMSIS not found in project list"
         fi
         west zephyr-export
     - name: Cache Python packages
